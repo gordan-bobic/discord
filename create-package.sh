@@ -2,8 +2,6 @@
 # Author: TheElectronWill
 # This script downloads the latest version of Discord for linux, and creates a package with rpmbuild.
 
-cd "$(dirname "$(readlink -f -- "$0")")"
-
 source terminal-colors.sh # Adds color variables
 source common-functions.sh # Adds utilities functions
 source basic-checks.sh # Checks that rpmbuild is available and that the script isn't started as root
@@ -66,40 +64,38 @@ fi
 # Downloads the discord tar.gz archive and puts its name in the global variable archive_name.
 download_discord() {
 	echo "Downloading $app_name for linux..."
-	archive_url=$(curl -is --write-out "%{redirect_url}\n"  "${download_url}?platform=linux&format=tar.gz" -o /dev/null)
-	wget --content-disposition $wget_progress "${archive_url}"
-	archive_name="$(ls *.tar.gz)"
+	wget -c --content-disposition $wget_progress "${download_url}?platform=linux"
+	archive_name_deb="$(ls *.deb | tail -1 2>/dev/null)"
+	echo "Converting .deb to .tgz"
+	alien --to-tgz $archive_name_deb
+	archive_name_base=`echo $archive_name_deb|sed -e's/.deb$//'`
+	archive_name="$archive_name_base.tar.gz"
+	mkdir tmp
+	pushd tmp
+	echo "Extracting $archive_name_base.tgz"
+	tar -zxvf ../$archive_name_base.tgz
+	mkdir Discord
+	mv usr/share/discord/* Discord/
+	tar -zcvf ../$archive_name Discord
+	popd
+	rm -rf tmp
 }
 
-manage_dir "$work_dir" 'work'
-manage_dir "$rpm_dir" 'RPMs'
+#manage_dir "$work_dir" 'work'
+#manage_dir "$rpm_dir" 'RPMs'
 cd "$work_dir"
 
 # Downloads discord if needed.
-archive_name="$(ls *.tar.gz 2>/dev/null)"
-if [ $? -eq 0 ]; then
-	echo "Found the archive \"$archive_name\"."
-	ask_yesno 'Use this archive instead of downloading a new one?'
-	case "$answer" in
-		y|Y)
-			echo 'Existing archive selected.'
-			;;
-		*)
-			rm "$archive_name"
-			download_discord
-	esac
-else
+#archive_name="$(ls *.tar.gz 2>/dev/null)"
+#if [ $? -eq 0 ]; then
+#	echo "Found the archive \"$archive_name\"."
+#else
 	download_discord
-fi
-
-# Extracts the archive:
-echo
-mkdir -p "$downloaded_dir"
-extract "$archive_name" "$downloaded_dir" "--strip 1" # --strip 1 gets rid of the top archive's directory
-
+#fi
 
 # Gets Discord's version number + icon file name
 echo 'Analysing the files...'
+echo " -> Archive Name: $archive_name"
 pkg_version="$(echo "$archive_name" | cut -d'-' -f$cut_part | rev | cut -c 8- | rev)"
 # cut -d'-' -fn  splits the archive's name around the '-' character, and takes the n-th part
 # For example if archive_name is "discord-0.0.1.tar.gz" we get "0.0.1.tar.gz"
@@ -107,12 +103,20 @@ pkg_version="$(echo "$archive_name" | cut -d'-' -f$cut_part | rev | cut -c 8- | 
 # This actually removes the last 8 characters, ie the ".tar.gz" part.
 # So in our example we'll get pkg_version=0.0.1
 
+echo " -> Version: $pkg_version"
+
+if [ -e ../RPMs/$arch/discord-${pkg_version}-*.${arch}.rpm ]; then
+	echo "RPM already exists."
+else
+
+# Extracts the archive:
+echo
+mkdir -p "$downloaded_dir"
+extract "$archive_name" "$downloaded_dir" "--strip 1" # --strip 1 gets rid of the top archive's directory
+
 cd "$downloaded_dir"
 icon_name="$(ls *.png)"
-echo " -> Version: $pkg_version"
 echo " -> Icon: $icon_name"
-
-
 echo 'Generating desktop entry...'
 sed "s/@version/$pkg_version/; s/@icon/$icon_name/; s/@exe/$exe_name/; s/@name/$app_name/; s/@dir/$pkg_name/"\
 	"$desktop_model" > "$desktop_file"
@@ -123,8 +127,9 @@ rpmbuild --quiet -bb "$spec_file" --define "_topdir $work_dir" --define "_rpmdir
 	--define "desktop_file $desktop_file" --define "pkg_name $pkg_name" --define "pkg_req $pkg_req"
 
 disp "${bgreen}Done!${reset_font}"
+fi
 disp "The RPM package is located in the \"RPMs/$arch\" directory."
 disp '----------------'
 
-ask_remove_dir "$work_dir"
-ask_installpkg
+#rm -r "$work_dir"
+#ask_installpkg
